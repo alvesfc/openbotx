@@ -1,4 +1,4 @@
-# 🐦‍⬛ OpenBotX — Personal AI Assistant
+# 🐦‍ OpenBotX — Personal AI Assistant
 
 <p align="center">
     <a href="https://github.com/openbotx/openbotx" target="_blank" rel="noopener noreferrer">
