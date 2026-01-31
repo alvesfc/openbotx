@@ -1,0 +1,136 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openbotx"
+dynamic = ["version"]
+description = "Your Personal AI assistant for any OS and any platform"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11,<3.14"
+authors = [
+    {name = "Paulo Coutinho", email = "paulocoutinhox@gmail.com"}
+]
+maintainers = [
+    {name = "Paulo Coutinho", email = "paulocoutinhox@gmail.com"}
+]
+keywords = [
+    "ai",
+    "agent",
+    "assistant",
+    "personal",
+    "bot",
+    "llm",
+    "pydantic",
+    "pydantic-ai",
+    "skills",
+    "chatbot",
+    "telegram",
+    "websocket",
+    "mcp",
+    "anthropic",
+    "openai",
+]
+
+dependencies = [
+    # Core
+    "pydantic>=2.12.5",
+    "pydantic-ai>=1.50.0",
+    "python-dotenv>=1.2.1",
+    "pyyaml>=6.0.3",
+
+    # API
+    "fastapi>=0.128.0",
+    "uvicorn[standard]>=0.40.0",
+    "httpx>=0.28.1",
+
+    # Database
+    "sqlalchemy>=2.0.46",
+    "aiosqlite>=0.22.1",
+
+    # Gateways
+    "websockets<16.0",
+    "python-telegram-bot>=22.6",
+
+    # LLM
+    "anthropic>=0.77.0",
+    "openai>=2.16.0",
+
+    # Scheduler
+    "apscheduler>=3.11.2",
+
+    # Audio
+    "faster-whisper>=1.2.1",
+    "soundfile>=0.13.1",
+
+    # Image
+    "pillow>=11.0.0",
+
+    # Storage
+    "boto3>=1.42.38",
+
+    # MCP
+    "mcp>=1.26.0",
+
+    # Utilities
+    "tiktoken>=0.12.0",
+    "structlog>=25.5.0",
+
+    # CLI
+    "click>=8.3.1",
+    "rich>=14.3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.14.14",
+    "mypy>=1.19.1",
+    "build>=1.4.0",
+    "twine>=6.2.0",
+]
+
+[project.scripts]
+openbotx = "openbotx.cli.commands:cli"
+
+[project.urls]
+Homepage = "https://github.com/openbotx/openbotx"
+Repository = "https://github.com/openbotx/openbotx"
+Documentation = "https://github.com/openbotx/openbotx"
+"Bug Tracker" = "https://github.com/openbotx/openbotx/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["openbotx*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "openbotx.version.__version__"}
+
+[tool.setuptools.package-data]
+openbotx = [
+    "py.typed",
+    "skills/**/*.md",
+    "skills/**/*.yaml",
+    "skills/**/*.yml",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
