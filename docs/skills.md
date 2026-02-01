@@ -2,29 +2,35 @@
 
 Skills are capabilities defined in Markdown files that tell OpenBotX how to handle specific types of requests.
 
-## Native vs User Skills
+## Skill Sources and Precedence
 
-OpenBotX includes **built-in native skills** that come with the package, and you can create **custom user skills** in your project.
+OpenBotX loads skills from multiple sources with a defined precedence order. Higher precedence sources override lower ones.
 
-### Native Skills
+### Source Types (Lowest to Highest Precedence)
 
-- Located in the OpenBotX package (`openbotx/skills/`)
-- Included with installation
-- Examples: `screenshot`, `web-search`, `file-system`, etc.
-- Always available without configuration
-
-### User Skills
-
-- Located in your project's `skills/` directory
-- Created by you for custom functionality
-- **Can override native skills** by using the same skill ID
-- Loaded after native skills, so they take precedence
+| Source | Location | Description |
+|--------|----------|-------------|
+| **EXTRA** | Custom paths | Additional skill directories |
+| **BUNDLED** | `openbotx/skills/` | Built-in skills from package |
+| **MANAGED** | Managed directory | Skills managed by external tools |
+| **WORKSPACE** | `./skills/` | Your project's custom skills |
 
 ### Loading Order
 
-1. **Native skills** are loaded first from `openbotx/skills/`
-2. **User skills** are loaded second from your project's `skills/`
-3. If a user skill has the same ID as a native skill, the user version replaces it
+1. **Extra skills** are loaded first (lowest priority)
+2. **Bundled skills** are loaded second
+3. **Managed skills** are loaded third
+4. **Workspace skills** are loaded last (highest priority)
+5. If multiple sources have the same skill ID, the higher precedence version wins
+
+### Overriding Built-in Skills
+
+To override a bundled skill, create a skill with the same ID in your `skills/` directory:
+
+```bash
+# Override the built-in "screenshot" skill
+skills/screenshot/SKILL.md
+```
 
 ## Skill Format
 
@@ -77,6 +83,50 @@ Detailed description of what the skill does.
 | `required_providers` | list | Required providers (e.g., "storage:s3") |
 | `security.approval_required` | bool | Require approval before execution |
 | `security.admin_only` | bool | Only admins can use |
+| `eligibility.os` | list | Required OS (darwin, linux, windows) |
+| `eligibility.binaries` | list | Required binaries in PATH |
+| `eligibility.config_flags` | list | Required config flags |
+| `eligibility.required_providers` | list | Required providers |
+
+## Skill Eligibility
+
+Skills can specify eligibility requirements. If requirements are not met, the skill is not loaded.
+
+### OS Requirements
+
+```yaml
+eligibility:
+  os:
+    - darwin   # macOS
+    - linux
+```
+
+### Binary Requirements
+
+```yaml
+eligibility:
+  binaries:
+    - ffmpeg
+    - imagemagick
+```
+
+### Config Flag Requirements
+
+```yaml
+eligibility:
+  config_flags:
+    - enable_dangerous_tools
+    - experimental_features
+```
+
+### Provider Requirements
+
+```yaml
+eligibility:
+  required_providers:
+    - storage:s3
+    - transcription:whisper
+```
 
 ## Creating Skills
 

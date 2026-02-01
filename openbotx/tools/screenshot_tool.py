@@ -92,9 +92,7 @@ async def tool_take_screenshot(filename: str | None = None) -> ToolResult:
 
             result_path = stored_file.url or stored_file.path
 
-            result.add_image(
-                path=result_path if not stored_file.url else None, url=stored_file.url
-            )
+            result.add_image(path=result_path if not stored_file.url else None, url=stored_file.url)
 
             return result
 
@@ -118,41 +116,7 @@ def _take_screenshot_macos(filepath: Path) -> None:
 
 
 def _take_screenshot_linux(filepath: Path) -> None:
-    """Take screenshot on Linux using scrot or gnome-screenshot."""
-    # Try scrot first (most common)
-    try:
-        subprocess.run(
-            ["scrot", str(filepath)],
-            check=True,
-            capture_output=True,
-        )
-        return
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
-
-    # Try gnome-screenshot
-    try:
-        subprocess.run(
-            ["gnome-screenshot", "-f", str(filepath)],
-            check=True,
-            capture_output=True,
-        )
-        return
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
-
-    # Try import (ImageMagick)
-    try:
-        subprocess.run(
-            ["import", "-window", "root", str(filepath)],
-            check=True,
-            capture_output=True,
-        )
-        return
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
-
-    # Fallback to Python PIL
+    """Take screenshot on Linux using PIL."""
     screenshot = ImageGrab.grab()
     screenshot.save(str(filepath))
 

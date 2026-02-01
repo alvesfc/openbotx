@@ -26,12 +26,14 @@ It uses skills to define behavior, tools to execute actions, gateways for commun
 ## Features
 
 - **Multiple Gateways**: CLI, WebSocket, Telegram, HTTP API
-- **Skills System**: Define AI capabilities in Markdown files
+- **Skills System**: Define AI capabilities in Markdown files with source precedence
 - **Unlimited Tools**: Register Python functions as tools for the AI
+- **Message Directives**: Control AI behavior with `/think`, `/verbose`, `/reasoning`, etc.
+- **Tool Profiles**: MINIMAL, CODING, MESSAGING, FULL for context-appropriate tool access
 - **MCP Support**: Model Context Protocol integration
 - **Scheduling**: Cron jobs and one-time scheduled tasks
-- **Memory**: Persistent conversation history per channel
-- **Security**: Built-in prompt injection detection
+- **Memory**: Single memory system with local embeddings (sentence-transformers), tiktoken chunking, and hybrid search (vector + FTS)
+- **Security**: Built-in prompt injection detection and tool policies
 - **API**: Full REST API for all operations
 - **Providers**: Modular architecture - LLM, storage, database, transcription, TTS
 
@@ -66,8 +68,6 @@ uv tool install openbotx
 # Or install in current environment
 uv pip install openbotx
 ```
-
-**All features included**: Telegram, Audio (Whisper), S3, MCP, Screenshot, and more.
 
 ### From Source (Developers)
 
@@ -183,6 +183,25 @@ api:
   host: "0.0.0.0"
   port: 8000
 ```
+
+## Message Directives
+
+Control AI behavior by prefixing your message with directives:
+
+| Directive | Description |
+|-----------|-------------|
+| `/think` | Enable extended thinking mode |
+| `/verbose` | Provide detailed explanations |
+| `/reasoning` | Show reasoning process |
+| `/elevated` | Request elevated permissions |
+| `/minimal` | Use minimal tool set |
+| `/coding` | Use coding-focused tools |
+| `/messaging` | Use messaging-focused tools |
+| `/full` | Use all available tools |
+| `/quiet` | Minimal system prompts |
+| `/silent` | No system prompts |
+
+Example: `/think /verbose How do I implement authentication?`
 
 ## Creating Skills
 

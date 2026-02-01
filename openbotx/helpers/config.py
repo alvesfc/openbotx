@@ -126,6 +126,14 @@ class GatewaysConfig(BaseModel):
     telegram: TelegramGatewayConfig = Field(default_factory=TelegramGatewayConfig)
 
 
+class RelayConfig(BaseModel):
+    """Browser relay configuration."""
+
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 18792
+
+
 class APIConfig(BaseModel):
     """API configuration."""
 
@@ -202,6 +210,7 @@ class Config(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     gateways: GatewaysConfig = Field(default_factory=GatewaysConfig)
+    relay: RelayConfig = Field(default_factory=RelayConfig)
     api: APIConfig = Field(default_factory=APIConfig)
     transcription: TranscriptionConfig = Field(default_factory=TranscriptionConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)

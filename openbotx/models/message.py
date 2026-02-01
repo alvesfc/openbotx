@@ -8,10 +8,38 @@ from pydantic import BaseModel, Field
 
 from openbotx.models.enums import (
     GatewayType,
+    MessageDirective,
     MessageStatus,
     MessageType,
+    PromptMode,
     ResponseCapability,
+    ToolProfile,
 )
+
+
+class ParsedDirectives(BaseModel):
+    """Parsed directives from message text."""
+
+    directives: list[MessageDirective] = Field(default_factory=list)
+    clean_text: str = ""
+    prompt_mode: PromptMode = PromptMode.FULL
+    tool_profile: ToolProfile = ToolProfile.FULL
+    elevated: bool = False
+
+    @property
+    def has_think(self) -> bool:
+        """Check if think directive is present."""
+        return MessageDirective.THINK in self.directives
+
+    @property
+    def has_verbose(self) -> bool:
+        """Check if verbose directive is present."""
+        return MessageDirective.VERBOSE in self.directives
+
+    @property
+    def has_reasoning(self) -> bool:
+        """Check if reasoning directive is present."""
+        return MessageDirective.REASONING in self.directives
 
 
 class Attachment(BaseModel):
@@ -57,6 +85,7 @@ class InboundMessage(BaseModel):
     correlation_id: str = Field(default_factory=lambda: str(uuid4()))
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     reply_to: str | None = None
+    directives: ParsedDirectives | None = None
 
     @property
     def has_attachments(self) -> bool:
@@ -70,7 +99,21 @@ class InboundMessage(BaseModel):
 
     def get_content(self) -> str:
         """Get message content (text or transcription)."""
+        if self.directives and self.directives.clean_text:
+            return self.directives.clean_text
         return self.text or ""
+
+    def get_prompt_mode(self) -> PromptMode:
+        """Get the prompt mode from directives."""
+        if self.directives:
+            return self.directives.prompt_mode
+        return PromptMode.FULL
+
+    def get_tool_profile(self) -> ToolProfile:
+        """Get the tool profile from directives."""
+        if self.directives:
+            return self.directives.tool_profile
+        return ToolProfile.FULL
 
 
 class OutboundMessage(BaseModel):
@@ -94,10 +137,16 @@ class MessageContext(BaseModel):
     message: InboundMessage
     history: list[dict[str, Any]] = Field(default_factory=list)
     summary: str | None = None
+    user_summary: str | None = None
+    conversation_summary: str | None = None
     available_skills: list[str] = Field(default_factory=list)
     available_tools: list[str] = Field(default_factory=list)
     token_budget: int = 100000
     estimated_tokens: int = 0
+    prompt_mode: PromptMode = PromptMode.FULL
+    tool_profile: ToolProfile = ToolProfile.FULL
+    show_reasoning: bool = False
+    elevated_permissions: bool = False
 
 
 class ProcessingResult(BaseModel):

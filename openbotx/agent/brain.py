@@ -4,12 +4,8 @@ from typing import Any
 
 from pydantic_ai import Agent
 
-from openbotx.agent.prompts import (
-    build_memory_context,
-    build_system_prompt,
-    format_skills_for_prompt,
-    format_tools_for_prompt,
-)
+from openbotx.agent.prompt_builder import build_prompt, create_prompt_builder
+from openbotx.agent.prompts import get_system_context
 from openbotx.core.skills_registry import SkillsRegistry
 from openbotx.core.tools_registry import ToolsRegistry
 from openbotx.helpers.config import get_config
@@ -60,10 +56,15 @@ class AgentBrain:
                 if tool and tool.callable:
                     tools.append(tool.callable)
 
+        # Build base system prompt using the prompt builder
+        system_prompt = build_prompt(
+            context=get_system_context(),
+        )
+
         # Create agent with model and settings
         self._agent = Agent(
             model=pydantic_model,
-            system_prompt=build_system_prompt(),
+            system_prompt=system_prompt,
             tools=tools,
             model_settings=model_settings,
         )
@@ -82,6 +83,9 @@ class AgentBrain:
     ) -> str:
         """Build context prompt for the agent.
 
+        Uses the modular prompt builder with directive awareness.
+        Supports dual summaries (user profile + conversation context).
+
         Args:
             context: Message context
             matching_skills: Skills that match the request
@@ -89,40 +93,47 @@ class AgentBrain:
         Returns:
             Context prompt string
         """
-        parts = []
+        builder = create_prompt_builder()
 
-        # Add memory context
+        # Set prompt mode from context
+        builder.with_mode(context.prompt_mode)
+
+        # Add system context
+        builder.set_context(get_system_context())
+
+        # Add memory context if available (single format: user_summary + conversation_summary from JSON)
         if context.history or context.summary:
-            memory_context = build_memory_context(
+            builder.set_memory(
                 summary=context.summary,
                 history=context.history,
+                user_summary=context.user_summary,
+                conversation_summary=context.conversation_summary,
             )
-            parts.append(memory_context)
 
-        # Add skills context
+        # Add skills context if available - inject full skill content
         if matching_skills:
             skills_data = [
                 {
                     "id": s.id,
                     "name": s.name,
                     "description": s.description,
-                    "triggers": s.triggers.keywords,
+                    "triggers": s.triggers.keywords if s.triggers else [],
                 }
                 for s in matching_skills
             ]
-            skills_context = format_skills_for_prompt(skills_data)
-            parts.append(f"## Relevant Skills\n\n{skills_context}")
 
-            # Add detailed skill content
+            # Get detailed skill content (full SKILL.md content)
+            detailed_skills = []
             for skill in matching_skills:
                 if skill.content:
-                    parts.append(f"### Skill: {skill.name}\n\n{skill.get_context()}")
+                    detailed_skills.append((skill.name, skill.get_context()))
+
+            builder.set_skills(skills_data, detailed_skills if detailed_skills else None)
 
         # Add available tools
         if context.available_tools:
-            tools_data = [{"name": t, "description": ""} for t in context.available_tools]
+            tools_data = []
             if self._tools_registry:
-                tools_data = []
                 for name in context.available_tools:
                     tool = self._tools_registry.get(name)
                     if tool:
@@ -132,10 +143,16 @@ class AgentBrain:
                                 "description": tool.definition.description,
                             }
                         )
-            tools_context = format_tools_for_prompt(tools_data)
-            parts.append(f"## Available Tools\n\n{tools_context}")
+            else:
+                tools_data = [{"name": t, "description": ""} for t in context.available_tools]
 
-        return "\n\n".join(parts)
+            builder.set_tools(tools_data)
+
+        # Enable reasoning if requested
+        if context.show_reasoning:
+            builder.enable_reasoning()
+
+        return builder.build()
 
     def _extract_tool_outputs(self, result: Any) -> AgentResponse:
         """Extract tool outputs and convert to structured AgentResponse.
@@ -250,7 +267,7 @@ class AgentBrain:
         topic: str,
         context: MessageContext,
     ) -> SkillDefinition | None:
-        """Learn and create a new skill.
+        """Learn and create a new skill using the skill generator.
 
         Args:
             topic: Topic to learn about
@@ -264,83 +281,61 @@ class AgentBrain:
 
         self._logger.info("learning_skill", topic=topic)
 
-        # Use LLM to generate skill content
         try:
-            from anthropic import AsyncAnthropic
+            from openbotx.core.skill_generator import (
+                SkillGenerationRequest,
+                SkillGenerator,
+            )
 
             if not self._config.api_key:
                 self._logger.warning("learn_skill_no_api_key")
                 return None
 
-            client = AsyncAnthropic(api_key=self._config.api_key)
-
-            prompt = f"""Create a skill definition for the following topic: {topic}
-
-            Provide:
-            1. A clear, concise name
-            2. A description of what the skill does
-            3. Step-by-step instructions
-            4. Guidelines for when to use it
-            5. Example usage
-
-            Format your response as:
-            NAME: <skill name>
-            DESCRIPTION: <description>
-            STEPS:
-            - Step 1
-            - Step 2
-            ...
-            GUIDELINES:
-            - Guideline 1
-            - Guideline 2
-            ...
-            """
-
-            response = await client.messages.create(
+            # Create skill generator
+            generator = SkillGenerator(
+                api_key=self._config.api_key,
                 model=self._config.model,
-                max_tokens=2000,
-                messages=[{"role": "user", "content": prompt}],
+                provider=self._config.provider,
             )
 
-            # Parse response
-            text = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    text += block.text
+            # Build context for generation
+            context_str = ""
+            if context.history:
+                recent = context.history[-5:]
+                context_str = "\n".join(
+                    f"{m.get('role', 'user')}: {m.get('content', '')[:200]}" for m in recent
+                )
 
-            # Extract components
-            lines = text.split("\n")
-            name = topic
-            description = ""
-            steps = []
-            guidelines = []
-            current_section = None
+            # Generate skill
+            request = SkillGenerationRequest(
+                topic=topic,
+                context=context_str,
+                channel_id=context.message.channel_id,
+                user_id=context.message.user_id,
+                required_tools=(context.available_tools[:5] if context.available_tools else []),
+            )
 
-            for line in lines:
-                line = line.strip()
-                if line.startswith("NAME:"):
-                    name = line[5:].strip()
-                elif line.startswith("DESCRIPTION:"):
-                    description = line[12:].strip()
-                elif line.startswith("STEPS:"):
-                    current_section = "steps"
-                elif line.startswith("GUIDELINES:"):
-                    current_section = "guidelines"
-                elif line.startswith("- ") and current_section:
-                    if current_section == "steps":
-                        steps.append(line[2:])
-                    elif current_section == "guidelines":
-                        guidelines.append(line[2:])
+            result = await generator.generate(request)
 
-            # Create skill
-            skill_id = name.lower().replace(" ", "-")
+            if not result.success or not result.skill:
+                self._logger.warning(
+                    "skill_generation_failed",
+                    topic=topic,
+                    error=result.error,
+                )
+                return None
+
+            # Save the generated skill
             skill = await self._skills_registry.create_skill(
-                skill_id=skill_id,
-                name=name,
-                description=description or f"Skill for {topic}",
-                triggers=[topic.lower()],
-                steps=steps,
-                guidelines=guidelines,
+                skill_id=result.skill.id,
+                name=result.skill.name,
+                description=result.skill.description,
+                triggers=(
+                    result.skill.triggers.keywords if result.skill.triggers else [topic.lower()]
+                ),
+                tools=result.skill.tools,
+                steps=result.skill.steps,
+                guidelines=result.skill.guidelines,
             )
 
             self._logger.info(

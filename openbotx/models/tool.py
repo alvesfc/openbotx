@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from openbotx.models.enums import ToolGroup
+
 
 class ToolParameter(BaseModel):
     """Parameter definition for a tool."""
@@ -40,6 +42,8 @@ class ToolDefinition(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    group: ToolGroup | None = None
+    groups: list[ToolGroup] = Field(default_factory=list)
 
     def get_schema(self) -> dict[str, Any]:
         """Get JSON schema for tool parameters."""

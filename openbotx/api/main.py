@@ -21,6 +21,7 @@ from openbotx.api.routes import (
     tools,
 )
 from openbotx.core.orchestrator import get_orchestrator
+from openbotx.helpers.browser_cleanup import close_browser_tools
 from openbotx.helpers.logger import get_logger
 from openbotx.version import __version__
 
@@ -52,6 +53,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     await initialize_providers(config)
 
+    # Initialize memory index
+    from openbotx.helpers.memory_loader import initialize_memory_index
+
+    memory_index = await initialize_memory_index(config)
+    if memory_index:
+        logger.info("memory_index_ready")
+
     # Initialize orchestrator
     from openbotx.core.orchestrator import get_orchestrator
 
@@ -65,15 +73,34 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         message_handler=lambda msg: orchestrator.enqueue_message(msg),
     )
 
+    # Start background services
+    from openbotx.helpers.background_loader import (
+        start_background_services,
+        stop_background_services,
+    )
+
+    await start_background_services(config)
+
     logger.info("api_started")
 
     yield
 
     # Shutdown
     logger.info("api_stopping")
+    await stop_background_services()
+    await close_browser_tools()
+
     await stop_all_gateways()
     await orchestrator.stop()
     await stop_all_providers()
+
+    # Close memory index if it was initialized
+    from openbotx.core.memory_index import get_memory_index
+
+    mi = get_memory_index()
+    if mi:
+        mi.close()
+
     logger.info("api_stopped")
 
 

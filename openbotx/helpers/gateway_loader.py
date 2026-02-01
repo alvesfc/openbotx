@@ -1,7 +1,9 @@
 """Gateway loader helper for OpenBotX."""
 
+import os
 from collections.abc import Callable
 
+from openbotx.core.gateway_manager import GatewayManager
 from openbotx.helpers.config import Config, get_config
 from openbotx.helpers.logger import get_logger
 from openbotx.providers.base import get_provider_registry
@@ -38,6 +40,37 @@ def get_enabled_gateways(config: Config | None = None) -> list[dict[str, str]]:
         enabled.append({"name": "telegram", "display": "Telegram"})
 
     return enabled
+
+
+async def setup_gateways(
+    gateway_manager: GatewayManager,
+    gateway_type: str,
+    config: Config,
+) -> None:
+    """Register gateways with the gateway manager for the given type (cli, websocket, all).
+
+    Args:
+        gateway_manager: Gateway manager to register gateways with
+        gateway_type: One of cli, websocket, all
+        config: Application configuration
+    """
+    if gateway_type in ("cli", "all"):
+        from openbotx.providers.gateway.cli import CLIGateway
+
+        cli_gateway = CLIGateway(config={})
+        await cli_gateway.initialize()
+        gateway_manager.register("cli", cli_gateway)
+        _logger.info("gateway_registered", name="cli")
+
+    if gateway_type in ("websocket", "all"):
+        from openbotx.providers.gateway.websocket import WebSocketGateway
+
+        ws_host = os.getenv("OPENBOTX_WS_HOST", "0.0.0.0")
+        ws_port = int(os.getenv("OPENBOTX_WS_PORT", "8765"))
+        ws_gateway = WebSocketGateway(config={"host": ws_host, "port": ws_port})
+        await ws_gateway.initialize()
+        gateway_manager.register("websocket", ws_gateway)
+        _logger.info("gateway_registered", name="websocket", host=ws_host, port=ws_port)
 
 
 async def initialize_gateways(

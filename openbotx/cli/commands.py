@@ -8,6 +8,8 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from openbotx.helpers.browser_cleanup import close_browser_tools
+
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -104,10 +106,19 @@ async def _run_cli_mode(config) -> None:  # type: ignore
     # Register gateway
     registry.register(cli_gateway)
 
+    # Start background services
+    from openbotx.helpers.background_loader import (
+        start_background_services,
+        stop_background_services,
+    )
+
+    await start_background_services(config)
+
     try:
-        # Run interactive loop
         await cli_gateway.run_interactive()
     finally:
+        await stop_background_services()
+        await close_browser_tools()
         await stop_all_gateways()
         await orchestrator.stop()
         await stop_all_providers()

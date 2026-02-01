@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from openbotx.models.enums import SkillEligibilityReason, SkillSource
+
 
 class SkillTrigger(BaseModel):
     """Trigger definition for a skill."""
@@ -23,6 +25,25 @@ class SkillSecurity(BaseModel):
     denied_channels: list[str] = Field(default_factory=list)
 
 
+class SkillEligibility(BaseModel):
+    """Eligibility requirements for a skill."""
+
+    os: list[str] = Field(default_factory=list)
+    binaries: list[str] = Field(default_factory=list)
+    config_flags: list[str] = Field(default_factory=list)
+    required_providers: list[str] = Field(default_factory=list)
+
+
+class SkillEligibilityResult(BaseModel):
+    """Result of skill eligibility check."""
+
+    eligible: bool = True
+    reason: SkillEligibilityReason | None = None
+    missing_binary: str | None = None
+    missing_provider: str | None = None
+    message: str | None = None
+
+
 class SkillDefinition(BaseModel):
     """Skill definition parsed from SKILL.md files."""
 
@@ -34,6 +55,8 @@ class SkillDefinition(BaseModel):
     required_providers: list[str] = Field(default_factory=list)
     tools: list[str] = Field(default_factory=list)
     security: SkillSecurity = Field(default_factory=SkillSecurity)
+    eligibility: SkillEligibility = Field(default_factory=SkillEligibility)
+    source: SkillSource = SkillSource.WORKSPACE
     steps: list[str] = Field(default_factory=list)
     examples: list[str] = Field(default_factory=list)
     guidelines: list[str] = Field(default_factory=list)

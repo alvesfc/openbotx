@@ -96,6 +96,26 @@ gateways:
     allowed_users: []  # Optional: list of allowed Telegram user IDs
 ```
 
+### Background services
+
+Services that run when the application starts and stop when it shuts down (same pattern as gateways and providers). Start/stop are handled in one place: `start_background_services(config)` and `stop_background_services()`.
+
+Currently:
+- **relay** – browser relay for the Chrome extension (see below).
+
+### Browser Relay (background service)
+
+Configures the relay server used by the Chrome extension to attach tabs. When `relay.enabled` is true, the relay is started by `start_background_services` with OpenBotX (API or CLI) and stopped by `stop_background_services` on shutdown; it does not block the application.
+
+```yaml
+relay:
+  enabled: false  # Optional: default false; set true to start relay with OpenBotX
+  host: "127.0.0.1"  # Optional: default "127.0.0.1" (loopback only)
+  port: 18792  # Optional: default 18792; must match extension options
+```
+
+When `relay.enabled` is true, start OpenBotX with `openbotx start` or `openbotx start --cli-mode`; the relay runs in the background. Set the same port in the extension options, then click the toolbar button to attach a tab.
+
 ### Transcription Configuration
 
 Configure audio-to-text conversion.
@@ -177,6 +197,20 @@ paths:
   logs: "./logs"  # Optional: default "./logs"
   db: "./db"  # Optional: default "./db"
 ```
+
+### Memory (Vector Index)
+
+Memory is always enabled. OpenBotX uses a single memory system: local embeddings (sentence-transformers) and tiktoken for chunking. No remote embedding API.
+
+| Environment variable | Description | Default |
+|----------------------|-------------|---------|
+| `OPENBOTX_MEMORY_DB_PATH` | SQLite path for memory index | `data/memory.db` |
+| `OPENBOTX_MEMORY_PATHS` | Comma-separated paths to index (e.g. `./memory,./docs`) | (none) |
+| `OPENBOTX_EMBEDDING_MODEL` | sentence-transformers model name | `all-MiniLM-L6-v2` |
+| `OPENBOTX_CHUNK_SIZE` | Chunk size in tokens | `500` |
+| `OPENBOTX_CHUNK_OVERLAP` | Overlap between chunks in tokens | `50` |
+
+Requires: `sentence-transformers`, `tiktoken`. Hybrid search (vector + full-text) is always used. With the `sqlite-vec` loadable extension, vector search uses the index (fast); without it, vector search runs in memory over stored embeddings.
 
 ### Bot Identity Configuration
 

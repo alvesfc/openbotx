@@ -146,3 +146,71 @@ class LogFormat(str, Enum):
 
     JSON = "json"
     TEXT = "text"
+
+
+class ToolProfile(str, Enum):
+    """Tool profile for selecting tool sets."""
+
+    MINIMAL = "minimal"
+    CODING = "coding"
+    MESSAGING = "messaging"
+    FULL = "full"
+
+
+class ToolGroup(str, Enum):
+    """Tool group for categorizing tools."""
+
+    FS = "fs"
+    WEB = "web"
+    MEMORY = "memory"
+    SESSIONS = "sessions"
+    UI = "ui"
+    AUTOMATION = "automation"
+    MESSAGING = "messaging"
+    DATABASE = "database"
+    STORAGE = "storage"
+    SCHEDULER = "scheduler"
+    SYSTEM = "system"
+
+
+class MessageDirective(str, Enum):
+    """Directives that can be included in messages to control AI behavior."""
+
+    THINK = "think"
+    VERBOSE = "verbose"
+    REASONING = "reasoning"
+    ELEVATED = "elevated"
+
+
+class PromptMode(str, Enum):
+    """System prompt mode for controlling verbosity."""
+
+    FULL = "full"
+    MINIMAL = "minimal"
+    NONE = "none"
+
+
+class SkillSource(str, Enum):
+    """Source of skill definition - determines loading precedence."""
+
+    EXTRA = "extra"
+    BUNDLED = "bundled"
+    MANAGED = "managed"
+    WORKSPACE = "workspace"
+
+
+class CompactionStrategy(str, Enum):
+    """Strategy for message compaction/summarization."""
+
+    ADAPTIVE = "adaptive"
+    PROGRESSIVE = "progressive"
+    TRUNCATE = "truncate"
+
+
+class SkillEligibilityReason(str, Enum):
+    """Reason why a skill may be ineligible."""
+
+    OS_INCOMPATIBLE = "os_incompatible"
+    MISSING_BINARY = "missing_binary"
+    CONFIG_DISABLED = "config_disabled"
+    MISSING_PROVIDER = "missing_provider"

@@ -7,14 +7,23 @@ from typing import Any
 from openbotx.agent.brain import AgentBrain, get_agent_brain
 from openbotx.core.attachments import AttachmentProcessor, get_attachment_processor
 from openbotx.core.context_store import ContextStore, get_context_store
+from openbotx.core.memory_index import MemoryIndex, get_memory_index
 from openbotx.core.message_bus import MessageBus, get_message_bus
+from openbotx.core.message_validator import MessageValidator, get_message_validator
 from openbotx.core.security import SecurityManager, get_security_manager
 from openbotx.core.skills_registry import SkillsRegistry, get_skills_registry
 from openbotx.core.telemetry import Telemetry, get_telemetry
+from openbotx.core.tool_policy import create_tool_info_from_definition, get_tool_policy
 from openbotx.core.tools_registry import ToolsRegistry, get_tools_registry
+from openbotx.helpers.directives import parse_directives
 from openbotx.helpers.logger import get_logger
 from openbotx.helpers.tokens import count_tokens, estimate_tokens
-from openbotx.models.enums import GatewayType, ProviderType, ResponseCapability
+from openbotx.models.enums import (
+    GatewayType,
+    ProviderType,
+    ResponseCapability,
+    ToolProfile,
+)
 from openbotx.models.message import (
     InboundMessage,
     MessageContext,
@@ -38,6 +47,8 @@ class Orchestrator:
         telemetry: Telemetry | None = None,
         attachment_processor: AttachmentProcessor | None = None,
         agent_brain: AgentBrain | None = None,
+        message_validator: MessageValidator | None = None,
+        memory_index: MemoryIndex | None = None,
     ) -> None:
         """Initialize orchestrator.
 
@@ -50,6 +61,8 @@ class Orchestrator:
             telemetry: Telemetry instance
             attachment_processor: Attachment processor instance
             agent_brain: Agent brain instance
+            message_validator: Message validator instance
+            memory_index: Memory index instance
         """
         self._message_bus = message_bus or get_message_bus()
         self._context_store = context_store or get_context_store()
@@ -59,6 +72,8 @@ class Orchestrator:
         self._telemetry = telemetry or get_telemetry()
         self._attachment_processor = attachment_processor or get_attachment_processor()
         self._agent_brain = agent_brain or get_agent_brain()
+        self._message_validator = message_validator or get_message_validator()
+        self._memory_index = memory_index or get_memory_index()
 
         self._logger = get_logger("orchestrator")
         self._running = False
@@ -173,14 +188,53 @@ class Orchestrator:
             channel_id=message.channel_id,
         )
 
-        # Step 1: Process attachments (transcribe audio, etc.)
+        # Step 1: Validate message structure
+        validation_result = self._message_validator.validate(message)
+        if not validation_result.valid:
+            self._logger.warning(
+                "message_validation_failed",
+                message_id=message.id,
+                errors=validation_result.error_messages,
+            )
+            from openbotx.models.response import AgentResponse
+
+            error_response = AgentResponse()
+            error_response.add_error("; ".join(validation_result.error_messages))
+
+            gateway_capabilities = self._get_gateway_capabilities(message.gateway)
+            outbound = error_response.to_outbound_message(
+                channel_id=message.channel_id,
+                gateway_capabilities=gateway_capabilities,
+                gateway_type=message.gateway,
+                reply_to=message.id,
+                correlation_id=message.correlation_id,
+            )
+
+            return ProcessingResult(
+                success=False,
+                error="; ".join(validation_result.error_messages),
+                response=outbound,
+            )
+
+        # Step 2: Parse directives from message text
+        if message.text:
+            message.directives = parse_directives(message.text)
+            self._logger.debug(
+                "directives_parsed",
+                directives=[d.value for d in message.directives.directives],
+                prompt_mode=message.directives.prompt_mode.value,
+                tool_profile=message.directives.tool_profile.value,
+            )
+
+        # Step 3: Process attachments (transcribe audio, etc.)
         if message.has_attachments:
             message = await self._attachment_processor.process_message_attachments(message)
 
-        # Step 2: Security check
-        if message.text:
+        # Step 4: Security check (use clean text if directives parsed)
+        text_to_validate = message.get_content()
+        if text_to_validate:
             is_valid, violation = self._security_manager.validate_message(
-                message.text,
+                text_to_validate,
                 channel_id=message.channel_id,
                 user_id=message.user_id,
             )
@@ -212,29 +266,53 @@ class Orchestrator:
                     response=outbound,
                 )
 
-        # Step 3: Load context
+        # Step 5: Load context
         context = await self._context_store.load_context(message.channel_id)
 
-        # Step 4: Estimate tokens and check budget
-        estimated_tokens = estimate_tokens(message.text or "")
-        context_tokens = sum(count_tokens(t.content) for t in context.history[-20:])
-
-        # Step 5: Build message context
-        msg_context = MessageContext(
-            message=message,
-            history=[{"role": t.role, "content": t.content} for t in context.history[-20:]],
-            summary=context.summary,
-            available_skills=[s.id for s in self._skills_registry.list_skills()],
-            available_tools=[t.name for t in self._tools_registry.list_tools()],
-            estimated_tokens=estimated_tokens + context_tokens,
+        # Step 6: Use compaction to manage context within token budget
+        token_budget = self._context_store.max_history_tokens
+        compacted_history, updated_summary, needs_summary = (
+            self._context_store.get_compacted_context(context, token_budget)
         )
 
-        # Step 6: Process with agent
+        # Step 7: Estimate tokens
+        estimated_tokens = estimate_tokens(message.get_content())
+        context_tokens = sum(count_tokens(m.get("content", "")) for m in compacted_history)
+
+        # Step 8: Get prompt mode and tool profile from directives
+        prompt_mode = message.get_prompt_mode()
+        tool_profile = message.get_tool_profile()
+        show_reasoning = message.directives.has_reasoning if message.directives else False
+        elevated = message.directives.elevated if message.directives else False
+
+        # Step 9: Filter tools based on tool profile and elevation status
+        available_tools = self._filter_tools_by_profile(tool_profile, elevated)
+
+        # Step 10: Get dual summary
+        combined_summary = context.get_combined_summary() or updated_summary
+
+        # Step 11: Build message context with compacted history and summary
+        msg_context = MessageContext(
+            message=message,
+            history=compacted_history,
+            summary=combined_summary,
+            user_summary=context.user_summary,
+            conversation_summary=context.conversation_summary,
+            available_skills=[s.id for s in self._skills_registry.list_skills()],
+            available_tools=available_tools,
+            estimated_tokens=estimated_tokens + context_tokens,
+            prompt_mode=prompt_mode,
+            tool_profile=tool_profile,
+            show_reasoning=show_reasoning,
+            elevated_permissions=elevated,
+        )
+
+        # Step 12: Process with agent
         response = await self._agent_brain.process(message, msg_context)
         skills_used = response.skills_used
         tools_called = response.tools_called
 
-        # Step 7: Handle learning if needed
+        # Step 13: Handle learning if needed
         if response.needs_learning and response.learning_topic:
             skill = await self._agent_brain.learn_skill(
                 response.learning_topic,
@@ -247,11 +325,11 @@ class Orchestrator:
                     topic=response.learning_topic,
                 )
 
-        # Step 8: Save to context
+        # Step 14: Save to context (use clean text without directives)
         await self._context_store.add_turn(
             message.channel_id,
             "user",
-            message.text or "",
+            message.get_content(),
         )
         await self._context_store.add_turn(
             message.channel_id,
@@ -259,11 +337,14 @@ class Orchestrator:
             response.text,
         )
 
-        # Step 9: Check if summarization needed
+        # Step 15: Check if summarization needed and trigger in background
         updated_context = await self._context_store.load_context(message.channel_id)
-        if self._context_store.needs_summarization(updated_context):
-            # TODO: Trigger summarization in background
-            pass
+        if self._context_store.needs_summarization(updated_context) or needs_summary:
+            # Trigger summarization in background task
+            asyncio.create_task(
+                self._trigger_summarization(message.channel_id),
+                name=f"summarize-{message.channel_id}",
+            )
 
         # Calculate processing time
         processing_time = int((time.time() - start_time) * 1000)
@@ -288,6 +369,34 @@ class Orchestrator:
             processing_time_ms=processing_time,
         )
 
+    def _filter_tools_by_profile(
+        self,
+        profile: ToolProfile,
+        elevated: bool = False,
+    ) -> list[str]:
+        """Filter available tools based on tool profile using the tool policy system.
+
+        Args:
+            profile: Tool profile to filter by
+            elevated: Whether elevated permissions are active
+
+        Returns:
+            List of tool names available for this profile
+        """
+        all_tools = self._tools_registry.list_tools()
+        tool_policy = get_tool_policy()
+
+        # Convert to ToolInfo objects
+        tool_infos = []
+        for tool in all_tools:
+            tool_def = self._tools_registry.get(tool.name)
+            if tool_def and tool_def.definition:
+                tool_info = create_tool_info_from_definition(tool_def.definition)
+                tool_infos.append(tool_info)
+
+        # Filter using tool policy
+        return tool_policy.get_tool_names(tool_infos, profile, elevated)
+
     def _get_gateway_capabilities(self, gateway_type: GatewayType) -> set[ResponseCapability]:
         """Get capabilities of a specific gateway.
 
@@ -307,6 +416,26 @@ class Orchestrator:
 
         # Default: text only
         return {ResponseCapability.TEXT}
+
+    async def _trigger_summarization(self, channel_id: str) -> None:
+        """Trigger summarization for a channel in background.
+
+        Args:
+            channel_id: Channel to summarize
+        """
+        try:
+            success = await self._context_store.trigger_summarization(channel_id)
+            if success:
+                self._logger.info(
+                    "summarization_triggered",
+                    channel_id=channel_id,
+                )
+        except Exception as e:
+            self._logger.error(
+                "summarization_error",
+                channel_id=channel_id,
+                error=str(e),
+            )
 
     async def _send_response(self, response: OutboundMessage) -> bool:
         """Send a response via the appropriate gateway.

@@ -10,12 +10,25 @@ OpenBotX follows a provider-based architecture where everything is a provider. M
 
 ```
 Gateway → MessageBus → Orchestrator → Agent → Response → Gateway
-              ↓              ↓
-           Queue         Context
-                         Skills
-                         Tools
+              ↓              ↓           ↓
+           Queue         Directives   Context
+                         ToolPolicy   Skills
+                         Compaction   Tools
                          Security
 ```
+
+### Processing Pipeline
+
+1. **Directive Parsing**: Extract control directives from message
+2. **Attachment Processing**: Transcribe audio, process images
+3. **Security Check**: Validate input for injection attempts
+4. **Context Loading**: Load conversation history and summary
+5. **Tool Filtering**: Apply tool profile policy
+6. **Skill Matching**: Find relevant skills for the request
+7. **Prompt Building**: Construct system prompt with context
+8. **Agent Processing**: Execute PydanticAI agent
+9. **Memory Update**: Save conversation turn
+10. **Response Routing**: Send response via gateway
 
 ### Components
 
@@ -81,6 +94,38 @@ Security layers:
 - Prompt injection detection
 - Tool allowlist/denylist
 - Tool approval mechanism
+
+#### 9. Directive Parser (helpers/directives.py)
+
+Message directives control AI behavior:
+- `/think` - Enable extended thinking mode
+- `/verbose` - Provide detailed explanations
+- `/reasoning` - Show reasoning process
+- `/elevated` - Request elevated permissions
+- `/minimal`, `/coding`, `/messaging`, `/full` - Set tool profile
+- `/quiet`, `/silent` - Control prompt verbosity
+
+#### 10. Tool Policy (core/tool_policy.py)
+
+Tool access control system:
+- **Profiles**: MINIMAL, CODING, MESSAGING, FULL
+- **Groups**: FS, WEB, MEMORY, SESSIONS, UI, AUTOMATION, MESSAGING, DATABASE, STORAGE, SCHEDULER, SYSTEM
+- Allowlists and denylists
+- Elevation requirements
+
+#### 11. Message Compaction (core/compaction.py)
+
+Context management strategies:
+- **ADAPTIVE**: Dynamic adjustment based on context budget
+- **PROGRESSIVE**: Incremental summarization of older messages
+- **TRUNCATE**: Simple truncation of old messages
+
+#### 12. Prompt Builder (agent/prompt_builder.py)
+
+Modular system prompt construction:
+- Sections: CONTEXT, IDENTITY, SECURITY, FORMATTING, TOOLS, SKILLS, MEMORY, REASONING, LANGUAGE
+- Prompt modes: FULL, MINIMAL, NONE
+- Directive-aware generation
 
 #### 9. Telemetry (core/telemetry.py)
 

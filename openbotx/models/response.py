@@ -21,8 +21,8 @@ class AgentResponse(BaseModel):
     This response contains different types of content that gateways
     can render according to their capabilities.
 
-    If a gateway doesn't support a content type (e.g., CLI with images),
-    it should fall back to text representation.
+    When a gateway does not support a content type (e.g., CLI with images),
+    it uses the text representation.
     """
 
     contents: list[ResponseContent] = Field(default_factory=list)
@@ -102,7 +102,7 @@ class AgentResponse(BaseModel):
     def to_plain_text(self) -> str:
         """Convert all content to plain text representation.
 
-        This is used as fallback for gateways that don't support rich content.
+        Used when the gateway does not support rich content.
         """
         lines = []
 

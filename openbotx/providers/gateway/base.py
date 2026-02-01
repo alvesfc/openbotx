@@ -1,5 +1,6 @@
 """Base gateway provider for OpenBotX."""
 
+import asyncio
 from abc import abstractmethod
 from collections.abc import Callable
 from typing import Any
@@ -13,7 +14,11 @@ MessageHandler = Callable[[InboundMessage], None]
 
 
 class GatewayProvider(ProviderBase):
-    """Base class for gateway providers."""
+    """Base class for gateway providers.
+
+    Gateways can implement _run() for continuous async operation.
+    The GatewayManager will handle lifecycle and task management.
+    """
 
     provider_type = ProviderType.GATEWAY
     gateway_type: GatewayType
@@ -32,6 +37,8 @@ class GatewayProvider(ProviderBase):
         super().__init__(name, config)
         self._message_handler: MessageHandler | None = None
         self._response_capabilities: set[ResponseCapability] = {ResponseCapability.TEXT}
+        self._stop_event = asyncio.Event()
+        self._running = False
 
         # Generic authorization
         self.allowed_users: list[str] = []
@@ -43,6 +50,11 @@ class GatewayProvider(ProviderBase):
     def response_capabilities(self) -> set[ResponseCapability]:
         """Get response capabilities supported by this gateway."""
         return self._response_capabilities
+
+    @property
+    def is_running(self) -> bool:
+        """Check if gateway is running."""
+        return self._running
 
     def supports_response_type(self, response_type: ResponseCapability) -> bool:
         """Check if gateway supports a response type.
@@ -101,6 +113,27 @@ class GatewayProvider(ProviderBase):
         else:
             self._logger.warning("no_message_handler", message_id=message.id)
 
+    async def _run(self) -> None:
+        """Main run loop for the gateway.
+
+        Override this method to implement continuous async operation.
+        The loop should check self._stop_event periodically to allow graceful shutdown.
+
+        Example:
+            while not self._stop_event.is_set():
+                await self._process_next()
+                await asyncio.sleep(0.1)
+        """
+        # default implementation waits for stop
+        await self._stop_event.wait()
+
+    def request_stop(self) -> None:
+        """Request the gateway to stop.
+
+        Sets the stop event which should cause _run() to exit.
+        """
+        self._stop_event.set()
+
     @abstractmethod
     async def send(self, message: OutboundMessage) -> bool:
         """Send an outbound message.
@@ -120,11 +153,12 @@ class GatewayProvider(ProviderBase):
             ProviderHealth status
         """
         return ProviderHealth(
-            healthy=True,
+            healthy=self._running,
             status=self.status,
-            message="Gateway is running",
+            message="Gateway is running" if self._running else "Gateway is stopped",
             details={
                 "gateway_type": self.gateway_type.value,
                 "capabilities": [c.value for c in self._response_capabilities],
+                "running": self._running,
             },
         )

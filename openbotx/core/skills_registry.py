@@ -1,73 +1,144 @@
-"""Skills registry for OpenBotX - index and manage skills from .md files."""
+"""Skills registry for OpenBotX - index and manage skills from .md files.
 
+Implements skill loading with source precedence (extra < bundled < managed < workspace)
+and eligibility checks (OS, binaries, config flags).
+"""
+
+import platform
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from openbotx.helpers.logger import get_logger
-from openbotx.models.skill import SkillDefinition, SkillSecurity, SkillTrigger
+from openbotx.models.enums import SkillEligibilityReason, SkillSource
+from openbotx.models.skill import (
+    SkillDefinition,
+    SkillEligibility,
+    SkillEligibilityResult,
+    SkillSecurity,
+    SkillTrigger,
+)
 
 
 class SkillsRegistry:
-    """Registry for managing skills from markdown files."""
+    """Registry for managing skills from markdown files.
 
-    def __init__(self, skills_path: str = "./skills") -> None:
+    Skills are loaded with precedence: extra < bundled < managed < workspace.
+    Higher precedence sources override lower ones.
+    """
+
+    # Source precedence (lower number = lower priority)
+    SOURCE_PRECEDENCE: dict[SkillSource, int] = {
+        SkillSource.EXTRA: 0,
+        SkillSource.BUNDLED: 1,
+        SkillSource.MANAGED: 2,
+        SkillSource.WORKSPACE: 3,
+    }
+
+    def __init__(
+        self,
+        skills_path: str = "./skills",
+        managed_skills_path: str | None = None,
+        extra_skills_paths: list[str] | None = None,
+        check_eligibility: bool = True,
+        available_providers: list[str] | None = None,
+        config_flags: dict[str, bool] | None = None,
+    ) -> None:
         """Initialize skills registry.
 
         Args:
-            skills_path: Path to user skills directory
+            skills_path: Path to workspace skills directory
+            managed_skills_path: Path to managed skills directory
+            extra_skills_paths: Additional paths for extra skills
+            check_eligibility: Whether to check skill eligibility
+            available_providers: List of available provider names
+            config_flags: Configuration flags for skill eligibility
         """
         self.skills_path = Path(skills_path)
+        self.managed_skills_path = Path(managed_skills_path) if managed_skills_path else None
+        self.extra_skills_paths = [Path(p) for p in (extra_skills_paths or [])]
+        self.check_eligibility = check_eligibility
+        self.available_providers = set(available_providers or [])
+        self.config_flags = config_flags or {}
+
         self._skills: dict[str, SkillDefinition] = {}
+        self._ineligible_skills: dict[str, SkillEligibilityResult] = {}
         self._logger = get_logger("skills_registry")
 
-        # Path to built-in/native skills (inside openbotx package)
-        self._native_skills_path = Path(__file__).parent.parent / "skills"
+        # Path to built-in/bundled skills (inside openbotx package)
+        self._bundled_skills_path = Path(__file__).parent.parent / "skills"
 
-        # Ensure user directory exists
+        # Ensure workspace directory exists
         self.skills_path.mkdir(parents=True, exist_ok=True)
 
     async def load_skills(self) -> int:
-        """Load all skills from native and user directories.
+        """Load all skills with source precedence.
 
-        Native skills are loaded first, then user skills can override them.
+        Loading order (lower to higher precedence):
+        1. Extra skills (extra_skills_paths)
+        2. Bundled skills (inside openbotx package)
+        3. Managed skills (managed_skills_path)
+        4. Workspace skills (skills_path)
+
+        Higher precedence sources override lower ones.
 
         Returns:
-            Number of skills loaded
+            Number of unique skills loaded
         """
         self._skills.clear()
-        count = 0
+        self._ineligible_skills.clear()
 
-        # Load native/built-in skills first
-        if self._native_skills_path.exists():
-            native_count = await self._load_skills_from_path(
-                self._native_skills_path,
-                source="native",
+        # Load in order of precedence (lowest first)
+
+        # 1. Extra skills
+        for extra_path in self.extra_skills_paths:
+            if extra_path.exists():
+                await self._load_skills_from_path(
+                    extra_path,
+                    source=SkillSource.EXTRA,
+                )
+
+        # 2. Bundled skills
+        if self._bundled_skills_path.exists():
+            await self._load_skills_from_path(
+                self._bundled_skills_path,
+                source=SkillSource.BUNDLED,
             )
-            count += native_count
 
-        # Load user skills (can override native skills)
-        user_count = await self._load_skills_from_path(
-            self.skills_path,
-            source="user",
+        # 3. Managed skills
+        if self.managed_skills_path and self.managed_skills_path.exists():
+            await self._load_skills_from_path(
+                self.managed_skills_path,
+                source=SkillSource.MANAGED,
+            )
+
+        # 4. Workspace skills (highest precedence)
+        if self.skills_path.exists():
+            await self._load_skills_from_path(
+                self.skills_path,
+                source=SkillSource.WORKSPACE,
+            )
+
+        self._logger.info(
+            "skills_loaded",
+            count=len(self._skills),
+            ineligible=len(self._ineligible_skills),
         )
-        count += user_count
-
-        self._logger.info("skills_loaded", count=count)
-        return count
+        return len(self._skills)
 
     async def _load_skills_from_path(
         self,
         path: Path,
-        source: str = "user",
+        source: SkillSource,
     ) -> int:
         """Load skills from a specific path.
 
         Args:
             path: Path to scan for skills
-            source: Source identifier (native/user)
+            source: Source identifier
 
         Returns:
             Number of skills loaded from this path
@@ -82,10 +153,38 @@ class SkillsRegistry:
                 "skill.yml",
             ):
                 try:
-                    skill = await self._load_skill_file(skill_file)
+                    skill = await self._load_skill_file(skill_file, source)
                     if skill:
-                        # Check if overriding native skill
-                        is_override = skill.id in self._skills and source == "user"
+                        # Check eligibility
+                        if self.check_eligibility:
+                            eligibility = self._check_skill_eligibility(skill)
+                            if not eligibility.eligible:
+                                self._ineligible_skills[skill.id] = eligibility
+                                self._logger.debug(
+                                    "skill_ineligible",
+                                    skill_id=skill.id,
+                                    reason=eligibility.reason.value
+                                    if eligibility.reason
+                                    else "unknown",
+                                    message=eligibility.message,
+                                )
+                                continue
+
+                        # Check if overriding existing skill
+                        existing = self._skills.get(skill.id)
+                        if existing:
+                            # Only override if new source has higher precedence
+                            existing_precedence = self.SOURCE_PRECEDENCE.get(existing.source, 0)
+                            new_precedence = self.SOURCE_PRECEDENCE.get(source, 0)
+
+                            if new_precedence < existing_precedence:
+                                self._logger.debug(
+                                    "skill_override_skipped",
+                                    skill_id=skill.id,
+                                    existing_source=existing.source.value,
+                                    new_source=source.value,
+                                )
+                                continue
 
                         self._skills[skill.id] = skill
                         count += 1
@@ -95,8 +194,8 @@ class SkillsRegistry:
                             skill_id=skill.id,
                             name=skill.name,
                             path=str(skill_file),
-                            source=source,
-                            override=is_override,
+                            source=source.value,
+                            override=existing is not None,
                         )
                 except Exception as e:
                     self._logger.error(
@@ -107,11 +206,77 @@ class SkillsRegistry:
 
         return count
 
-    async def _load_skill_file(self, path: Path) -> SkillDefinition | None:
+    def _check_skill_eligibility(self, skill: SkillDefinition) -> SkillEligibilityResult:
+        """Check if a skill is eligible to run.
+
+        Args:
+            skill: Skill to check
+
+        Returns:
+            Eligibility result
+        """
+        eligibility = skill.eligibility
+
+        # Check OS compatibility
+        if eligibility.os:
+            current_os = platform.system().lower()
+            os_aliases = {
+                "darwin": ["darwin", "macos", "mac"],
+                "linux": ["linux"],
+                "windows": ["windows", "win"],
+            }
+            allowed_os = []
+            for os_name in eligibility.os:
+                allowed_os.extend(os_aliases.get(os_name.lower(), [os_name.lower()]))
+
+            if current_os not in allowed_os:
+                return SkillEligibilityResult(
+                    eligible=False,
+                    reason=SkillEligibilityReason.OS_INCOMPATIBLE,
+                    message=f"Skill requires OS: {', '.join(eligibility.os)} (current: {current_os})",
+                )
+
+        # Check required binaries
+        for binary in eligibility.binaries:
+            if not shutil.which(binary):
+                return SkillEligibilityResult(
+                    eligible=False,
+                    reason=SkillEligibilityReason.MISSING_BINARY,
+                    missing_binary=binary,
+                    message=f"Required binary not found: {binary}",
+                )
+
+        # Check config flags
+        for flag in eligibility.config_flags:
+            if not self.config_flags.get(flag, False):
+                return SkillEligibilityResult(
+                    eligible=False,
+                    reason=SkillEligibilityReason.CONFIG_DISABLED,
+                    message=f"Config flag not enabled: {flag}",
+                )
+
+        # Check required providers
+        for provider in eligibility.required_providers:
+            if provider not in self.available_providers:
+                return SkillEligibilityResult(
+                    eligible=False,
+                    reason=SkillEligibilityReason.MISSING_PROVIDER,
+                    missing_provider=provider,
+                    message=f"Required provider not available: {provider}",
+                )
+
+        return SkillEligibilityResult(eligible=True)
+
+    async def _load_skill_file(
+        self,
+        path: Path,
+        source: SkillSource = SkillSource.WORKSPACE,
+    ) -> SkillDefinition | None:
         """Load a skill from a file.
 
         Args:
             path: Path to skill file
+            source: Source of the skill
 
         Returns:
             SkillDefinition or None
@@ -121,21 +286,23 @@ class SkillsRegistry:
         # Check if it's a YAML file or Markdown with frontmatter
         if path.suffix in (".yaml", ".yml"):
             data = yaml.safe_load(content)
-            return self._parse_skill_data(data, path)
+            return self._parse_skill_data(data, path, source=source)
 
         # Parse Markdown with YAML frontmatter
-        return self._parse_markdown_skill(content, path)
+        return self._parse_markdown_skill(content, path, source=source)
 
     def _parse_markdown_skill(
         self,
         content: str,
         path: Path,
+        source: SkillSource = SkillSource.WORKSPACE,
     ) -> SkillDefinition | None:
         """Parse a markdown skill file with YAML frontmatter.
 
         Args:
             content: File content
             path: File path
+            source: Source of the skill
 
         Returns:
             SkillDefinition or None
@@ -180,7 +347,7 @@ class SkillsRegistry:
         if "guidelines" not in data and "Guidelines" in sections:
             data["guidelines"] = self._parse_list_section(sections["Guidelines"])
 
-        return self._parse_skill_data(data, path, body)
+        return self._parse_skill_data(data, path, body, source)
 
     def _parse_markdown_sections(self, content: str) -> dict[str, str]:
         """Parse markdown sections from content.
@@ -232,6 +399,7 @@ class SkillsRegistry:
         data: dict[str, Any],
         path: Path,
         body: str = "",
+        source: SkillSource = SkillSource.WORKSPACE,
     ) -> SkillDefinition:
         """Parse skill data into SkillDefinition.
 
@@ -239,6 +407,7 @@ class SkillsRegistry:
             data: Parsed data
             path: File path
             body: Markdown body content
+            source: Source of the skill
 
         Returns:
             SkillDefinition
@@ -267,6 +436,16 @@ class SkillsRegistry:
             denied_channels=security_data.get("denied_channels", []),
         )
 
+        # Parse eligibility requirements
+        eligibility_data = data.get("eligibility", {})
+        eligibility = SkillEligibility(
+            os=eligibility_data.get("os", []),
+            binaries=eligibility_data.get("binaries", []),
+            config_flags=eligibility_data.get("config_flags", []),
+            required_providers=eligibility_data.get("required_providers", [])
+            or data.get("required_providers", []),
+        )
+
         return SkillDefinition(
             id=skill_id,
             name=data.get("name", skill_id),
@@ -276,6 +455,8 @@ class SkillsRegistry:
             required_providers=data.get("required_providers", []),
             tools=data.get("tools", []),
             security=security,
+            eligibility=eligibility,
+            source=source,
             steps=data.get("steps", []),
             examples=data.get("examples", []),
             guidelines=data.get("guidelines", []),
@@ -326,6 +507,86 @@ class SkillsRegistry:
                     break
 
         return matches
+
+    def list_by_source(self, source: SkillSource) -> list[SkillDefinition]:
+        """List skills from a specific source.
+
+        Args:
+            source: Source to filter by
+
+        Returns:
+            List of skills from that source
+        """
+        return [s for s in self._skills.values() if s.source == source]
+
+    def list_ineligible_skills(self) -> dict[str, SkillEligibilityResult]:
+        """List skills that failed eligibility checks.
+
+        Returns:
+            Dict of skill_id to eligibility result
+        """
+        return self._ineligible_skills.copy()
+
+    def get_skill_for_prompt(self, skill_id: str) -> dict[str, Any] | None:
+        """Get skill data formatted for prompt injection.
+
+        Args:
+            skill_id: Skill identifier
+
+        Returns:
+            Skill data dict or None
+        """
+        skill = self.get(skill_id)
+        if not skill:
+            return None
+
+        return {
+            "id": skill.id,
+            "name": skill.name,
+            "description": skill.description,
+            "triggers": skill.triggers.keywords if skill.triggers else [],
+            "steps": skill.steps,
+            "guidelines": skill.guidelines,
+            "content": skill.get_context(),
+        }
+
+    def get_skills_for_prompt(
+        self,
+        skill_ids: list[str] | None = None,
+        matching_text: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Get skills formatted for prompt injection.
+
+        Args:
+            skill_ids: Specific skill IDs to include
+            matching_text: Text to match against triggers
+            limit: Maximum number of skills
+
+        Returns:
+            List of skill data dicts
+        """
+        skills_to_include = []
+
+        if skill_ids:
+            for skill_id in skill_ids[:limit]:
+                skill = self.get(skill_id)
+                if skill:
+                    skills_to_include.append(skill)
+        elif matching_text:
+            skills_to_include = self.find_matching_skills(matching_text, limit)
+        else:
+            skills_to_include = list(self._skills.values())[:limit]
+
+        return [
+            {
+                "id": s.id,
+                "name": s.name,
+                "description": s.description,
+                "triggers": s.triggers.keywords if s.triggers else [],
+            }
+            for s in skills_to_include
+        ]
 
     async def create_skill(
         self,
