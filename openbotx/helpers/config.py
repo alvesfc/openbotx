@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from openbotx.helpers.logger import get_logger
 from openbotx.models.enums import (
@@ -83,17 +83,39 @@ class StorageConfig(BaseModel):
         return {}
 
 
+def _normalize_llm_base_url(url: str | None) -> str | None:
+    """Strip trailing slash and /chat/completions from LLM base URL."""
+    if not url or not url.strip():
+        return None
+    u = url.strip().rstrip("/")
+    for suffix in ("/chat/completions", "/v1/chat/completions"):
+        if u.endswith(suffix):
+            u = u[: -len(suffix)].rstrip("/")
+            break
+    return u or None
+
+
 class LLMConfig(BaseModel):
     """LLM configuration.
 
-    All fields beyond provider and model are passed directly to PydanticAI's ModelSettings.
-    Common settings: max_tokens, temperature, top_p, timeout, etc.
+    All fields beyond provider, model, base_url and api_key are passed to
+    PydanticAI's ModelSettings (e.g., max_tokens, temperature, top_p).
+
+    When base_url and api_key are set, the agent uses an OpenAI-compatible
+    endpoint (same request/response format as OpenAI) with that URL and token.
     """
 
-    model_config = {"extra": "allow"}  # Allow any extra fields from YAML
+    model_config = {"extra": "allow"}
 
-    provider: str = "anthropic"  # e.g., "anthropic", "openai", "google"
-    model: str = "claude-sonnet-4-20250514"  # e.g., "claude-3-5-sonnet", "gpt-4o"
+    provider: str
+    model: str
+    base_url: str | None = None
+    api_key: str | None = None
+
+    @field_validator("base_url", mode="after")
+    @classmethod
+    def _normalize_base_url(cls, v: str | None) -> str | None:
+        return _normalize_llm_base_url(v) if v else None
 
 
 class CLIGatewayConfig(BaseModel):
@@ -208,7 +230,7 @@ class Config(BaseModel):
     bot: BotConfig = Field(default_factory=BotConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
-    llm: LLMConfig = Field(default_factory=LLMConfig)
+    llm: LLMConfig
     gateways: GatewaysConfig = Field(default_factory=GatewaysConfig)
     relay: RelayConfig = Field(default_factory=RelayConfig)
     api: APIConfig = Field(default_factory=APIConfig)
@@ -256,10 +278,9 @@ def load_config(
         if env_file.exists():
             load_dotenv(env_file)
 
-    # Load YAML config
     config_file = Path(config_path)
     if not config_file.exists():
-        return Config()
+        raise FileNotFoundError(f"Config file not found: {config_file}")
 
     with open(config_file) as f:
         raw_config = yaml.safe_load(f) or {}

@@ -291,11 +291,11 @@ class AgentBrain:
                 self._logger.warning("learn_skill_no_api_key")
                 return None
 
-            # Create skill generator
             generator = SkillGenerator(
                 api_key=self._config.api_key,
                 model=self._config.model,
                 provider=self._config.provider,
+                base_url=self._config.base_url,
             )
 
             # Build context for generation

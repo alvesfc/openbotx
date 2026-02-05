@@ -98,8 +98,9 @@ async def get_system_config() -> dict:
             "type": config.storage.type.value,
         },
         "llm": {
-            "provider": config.llm.provider.value,
+            "provider": config.llm.provider,
             "model": config.llm.model,
+            "base_url": config.llm.base_url,
         },
         "gateways": {
             "cli": {"enabled": config.gateways.cli.enabled},

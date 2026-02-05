@@ -74,9 +74,10 @@ class SkillGenerator:
 
     def __init__(
         self,
-        api_key: str | None = None,
-        model: str = "claude-sonnet-4-20250514",
-        provider: str = "anthropic",
+        api_key: str | None,
+        model: str,
+        provider: str,
+        base_url: str | None,
     ) -> None:
         """Initialize skill generator.
 
@@ -84,10 +85,12 @@ class SkillGenerator:
             api_key: API key for LLM provider
             model: Model to use for generation
             provider: LLM provider (anthropic, openai)
+            base_url: Optional base URL for OpenAI-compatible endpoint
         """
         self.api_key = api_key
         self.model = model
         self.provider = provider
+        self.base_url = base_url
         self._logger = get_logger("skill_generator")
 
     async def generate(self, request: SkillGenerationRequest) -> SkillGenerationResult:
@@ -182,12 +185,13 @@ class SkillGenerator:
         Returns:
             Raw response text
         """
+        if self.base_url and self.api_key:
+            return await self._call_openai(prompt)
         if self.provider == "anthropic":
             return await self._call_anthropic(prompt)
-        elif self.provider == "openai":
+        if self.provider == "openai":
             return await self._call_openai(prompt)
-        else:
-            raise ValueError(f"Unsupported provider: {self.provider}")
+        raise ValueError(f"Unsupported provider: {self.provider}")
 
     async def _call_anthropic(self, prompt: str) -> str:
         """Call Anthropic API.
@@ -216,7 +220,7 @@ class SkillGenerator:
         return text
 
     async def _call_openai(self, prompt: str) -> str:
-        """Call OpenAI API.
+        """Call OpenAI or OpenAI-compatible API.
 
         Args:
             prompt: Generation prompt
@@ -226,7 +230,10 @@ class SkillGenerator:
         """
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key=self.api_key)
+        client_kwargs: dict[str, str] = {"api_key": self.api_key or ""}
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+        client = AsyncOpenAI(**client_kwargs)
 
         response = await client.chat.completions.create(
             model=self.model,

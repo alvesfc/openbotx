@@ -382,7 +382,7 @@ def config() -> None:
     table.add_row("Bot Name", config.bot.name)
     table.add_row("Database Type", config.database.type.value)
     table.add_row("Storage Type", config.storage.type.value)
-    table.add_row("LLM Provider", config.llm.provider.value)
+    table.add_row("LLM Provider", config.llm.provider)
     table.add_row("LLM Model", config.llm.model)
     table.add_row("API Host", config.api.host)
     table.add_row("API Port", str(config.api.port))
