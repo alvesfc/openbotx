@@ -9,18 +9,30 @@ _logger = get_logger("llm_model")
 
 
 def create_pydantic_model(config: LLMConfig) -> str | Any:
-    """Create a PydanticAI model string or OpenAIChatModel from config.
+    """Create a PydanticAI model string or model instance from config.
 
-    When base_url and api_key are set, returns an OpenAIChatModel using
-    OpenAIProvider(base_url=..., api_key=...) for OpenAI-compatible endpoints.
-    Otherwise returns "provider:model" and PydanticAI uses env API keys.
+    For OpenRouter provider with api_key, returns OpenRouterModel instance.
+    For base_url and api_key, returns OpenAIChatModel for OpenAI-compatible endpoints.
+    Otherwise returns "provider:model" string and PydanticAI uses env API keys.
 
     Args:
         config: LLM configuration
 
     Returns:
-        Model string (e.g. "anthropic:claude-3-5-sonnet") or OpenAIChatModel
+        Model string (e.g. "anthropic:claude-3-5-sonnet") or model instance
     """
+    if config.provider == "openrouter" and config.api_key:
+        from pydantic_ai.models.openrouter import OpenRouterModel
+        from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+        provider = OpenRouterProvider(api_key=config.api_key)
+        model = OpenRouterModel(config.model, provider=provider)
+        _logger.info(
+            "openrouter_model_created",
+            model=config.model,
+        )
+        return model
+
     if config.base_url and config.api_key:
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.openai import OpenAIProvider

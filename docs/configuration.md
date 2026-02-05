@@ -32,12 +32,43 @@ PydanticAI automatically loads API keys from environment variables:
 - `openai`: OpenAI GPT models
   - Models: `gpt-4o`, `gpt-3.5-turbo`, etc
   - Environment Variable: `OPENAI_API_KEY`
+- `openrouter`: OpenRouter (access to multiple LLM providers)
+  - Models: `moonshotai/kimi-k2.5`, `anthropic/claude-3.5-sonnet`, `openai/gpt-4`, etc
+  - Environment Variable: `OPENROUTER_API_KEY`
 
 Set API keys in your `.env` file:
 ```bash
 ANTHROPIC_API_KEY=your_key_here
 OPENAI_API_KEY=your_key_here
+OPENROUTER_API_KEY=your_key_here
 ```
+
+**OpenRouter Configuration:**
+
+```yaml
+llm:
+  provider: "openrouter"
+  model: "moonshotai/kimi-k2.5"  # or any model from openrouter.ai
+  api_key: "${OPENROUTER_API_KEY}"
+  max_tokens: 4096
+  temperature: 0.7
+```
+
+**OpenAI-Compatible Endpoints:**
+
+For custom OpenAI-compatible endpoints (like local LLMs, vLLM, LM Studio, etc):
+
+```yaml
+llm:
+  provider: "openai"  # provider is ignored when base_url is set
+  model: "your-model-name"
+  base_url: "http://localhost:8000/v1"  # your OpenAI-compatible endpoint
+  api_key: "your-api-key"  # or "dummy" if not required
+  max_tokens: 4096
+  temperature: 0.7
+```
+
+**Note:** When `base_url` is specified, OpenBotX uses OpenAI-compatible mode regardless of the provider value.
 
 ### Database Configuration
 
@@ -228,6 +259,7 @@ Create a `.env` file in your project directory with your secrets:
 # LLM API Keys (choose based on your provider)
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
+OPENROUTER_API_KEY=sk-or-v1-...
 
 # Storage (if using S3)
 S3_BUCKET=my-bucket

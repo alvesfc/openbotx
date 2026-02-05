@@ -164,9 +164,11 @@ bot:
   description: "AI Assistant powered by OpenBotX"
 
 llm:
-  provider: "anthropic"  # Any PydanticAI supported provider
+  provider: "anthropic"  # anthropic, openai, openrouter, etc
   model: "claude-sonnet-4-20250514"
   # Optional: max_tokens, temperature, top_p, timeout, etc
+  # For OpenRouter: provider: "openrouter", model: "moonshotai/kimi-k2.5"
+  # For custom endpoints: base_url: "http://localhost:8000/v1", api_key: "your-key"
 
 gateways:
   cli:
